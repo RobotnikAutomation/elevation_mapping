@@ -11,7 +11,7 @@
 
 int main(int argc, char** argv) {
   ros::init(argc, argv, "elevation_mapping");
-  ros::NodeHandle nodeHandle;
+  ros::NodeHandle nodeHandle("~");
   elevation_mapping::ElevationMapping elevationMap(nodeHandle);
 
   // Spin
