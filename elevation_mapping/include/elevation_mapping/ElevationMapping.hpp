@@ -242,6 +242,7 @@ class ElevationMapping {
 
   //! ROS nodehandle.
   ros::NodeHandle nodeHandle_;
+  ros::NodeHandle p_nodeHandle_;
 
  protected:
   //! Input sources.

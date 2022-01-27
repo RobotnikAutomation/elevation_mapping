@@ -33,7 +33,8 @@ namespace elevation_mapping {
 
 ElevationMapping::ElevationMapping(ros::NodeHandle& nodeHandle)
     : nodeHandle_(nodeHandle),
-      inputSources_(nodeHandle_),
+      p_nodeHandle_("~"),
+      inputSources_(p_nodeHandle_),
       robotPoseCacheSize_(200),
       map_(nodeHandle),
       robotMotionMapUpdater_(nodeHandle),
@@ -52,28 +53,28 @@ ElevationMapping::ElevationMapping(ros::NodeHandle& nodeHandle)
   readParameters();
   setupSubscribers();
 
-  mapUpdateTimer_ = nodeHandle_.createTimer(maxNoUpdateDuration_, &ElevationMapping::mapUpdateTimerCallback, this, true, false);
+  mapUpdateTimer_ = p_nodeHandle_.createTimer(maxNoUpdateDuration_, &ElevationMapping::mapUpdateTimerCallback, this, true, false);
 
   // Multi-threading for fusion.
   ros::AdvertiseServiceOptions advertiseServiceOptionsForTriggerFusion = ros::AdvertiseServiceOptions::create<std_srvs::Empty>(
       "trigger_fusion", boost::bind(&ElevationMapping::fuseEntireMapServiceCallback, this, _1, _2), ros::VoidConstPtr(),
       &fusionServiceQueue_);
-  fusionTriggerService_ = nodeHandle_.advertiseService(advertiseServiceOptionsForTriggerFusion);
+  fusionTriggerService_ = p_nodeHandle_.advertiseService(advertiseServiceOptionsForTriggerFusion);
 
   ros::AdvertiseServiceOptions advertiseServiceOptionsForGetFusedSubmap = ros::AdvertiseServiceOptions::create<grid_map_msgs::GetGridMap>(
       "get_submap", boost::bind(&ElevationMapping::getFusedSubmapServiceCallback, this, _1, _2), ros::VoidConstPtr(), &fusionServiceQueue_);
-  fusedSubmapService_ = nodeHandle_.advertiseService(advertiseServiceOptionsForGetFusedSubmap);
+  fusedSubmapService_ = p_nodeHandle_.advertiseService(advertiseServiceOptionsForGetFusedSubmap);
 
   ros::AdvertiseServiceOptions advertiseServiceOptionsForGetRawSubmap = ros::AdvertiseServiceOptions::create<grid_map_msgs::GetGridMap>(
       "get_raw_submap", boost::bind(&ElevationMapping::getRawSubmapServiceCallback, this, _1, _2), ros::VoidConstPtr(),
       &fusionServiceQueue_);
-  rawSubmapService_ = nodeHandle_.advertiseService(advertiseServiceOptionsForGetRawSubmap);
+  rawSubmapService_ = p_nodeHandle_.advertiseService(advertiseServiceOptionsForGetRawSubmap);
 
   if (!fusedMapPublishTimerDuration_.isZero()) {
     ros::TimerOptions timerOptions =
         ros::TimerOptions(fusedMapPublishTimerDuration_, boost::bind(&ElevationMapping::publishFusedMapCallback, this, _1),
                           &fusionServiceQueue_, false, false);
-    fusedMapPublishTimer_ = nodeHandle_.createTimer(timerOptions);
+    fusedMapPublishTimer_ = p_nodeHandle_.createTimer(timerOptions);
   }
 
   // Multi-threading for visibility cleanup. Visibility clean-up does not help when continuous clean-up is enabled.
@@ -81,22 +82,22 @@ ElevationMapping::ElevationMapping(ros::NodeHandle& nodeHandle)
     ros::TimerOptions timerOptions =
         ros::TimerOptions(visibilityCleanupTimerDuration_, boost::bind(&ElevationMapping::visibilityCleanupCallback, this, _1),
                           &visibilityCleanupQueue_, false, false);
-    visibilityCleanupTimer_ = nodeHandle_.createTimer(timerOptions);
+    visibilityCleanupTimer_ = p_nodeHandle_.createTimer(timerOptions);
   }
 
-  clearMapService_ = nodeHandle_.advertiseService("clear_map", &ElevationMapping::clearMapServiceCallback, this);
-  enableUpdatesService_ = nodeHandle_.advertiseService("enable_updates", &ElevationMapping::enableUpdatesServiceCallback, this);
-  disableUpdatesService_ = nodeHandle_.advertiseService("disable_updates", &ElevationMapping::disableUpdatesServiceCallback, this);
-  maskedReplaceService_ = nodeHandle_.advertiseService("masked_replace", &ElevationMapping::maskedReplaceServiceCallback, this);
-  saveMapService_ = nodeHandle_.advertiseService("save_map", &ElevationMapping::saveMapServiceCallback, this);
-  loadMapService_ = nodeHandle_.advertiseService("load_map", &ElevationMapping::loadMapServiceCallback, this);
+  clearMapService_ = p_nodeHandle_.advertiseService("clear_map", &ElevationMapping::clearMapServiceCallback, this);
+  enableUpdatesService_ = p_nodeHandle_.advertiseService("enable_updates", &ElevationMapping::enableUpdatesServiceCallback, this);
+  disableUpdatesService_ = p_nodeHandle_.advertiseService("disable_updates", &ElevationMapping::disableUpdatesServiceCallback, this);
+  maskedReplaceService_ = p_nodeHandle_.advertiseService("masked_replace", &ElevationMapping::maskedReplaceServiceCallback, this);
+  saveMapService_ = p_nodeHandle_.advertiseService("save_map", &ElevationMapping::saveMapServiceCallback, this);
+  loadMapService_ = p_nodeHandle_.advertiseService("load_map", &ElevationMapping::loadMapServiceCallback, this);
 
   initialize();
 }
 
 void ElevationMapping::setupSubscribers() {  // Handle deprecated point_cloud_topic and input_sources configuration.
   const bool configuredInputSources = inputSources_.configureFromRos("input_sources");
-  const bool hasDeprecatedPointcloudTopic = nodeHandle_.hasParam("point_cloud_topic");
+  const bool hasDeprecatedPointcloudTopic = p_nodeHandle_.hasParam("point_cloud_topic");
   if (hasDeprecatedPointcloudTopic) {
     ROS_WARN("Parameter 'point_cloud_topic' is deprecated, please use 'input_sources' instead.");
   }
@@ -138,7 +139,7 @@ ElevationMapping::~ElevationMapping() {
     visibilityCleanupQueue_.clear();
   }
 
-  nodeHandle_.shutdown();
+  p_nodeHandle_.shutdown();
 
   // Join threads.
   if (fusionServiceThread_.joinable()) {
@@ -151,18 +152,18 @@ ElevationMapping::~ElevationMapping() {
 
 bool ElevationMapping::readParameters() {
   // ElevationMapping parameters.
-  nodeHandle_.param("point_cloud_topic", pointCloudTopic_, std::string("/points"));
-  nodeHandle_.param("robot_pose_with_covariance_topic", robotPoseTopic_, std::string("/pose"));
-  nodeHandle_.param("track_point_frame_id", trackPointFrameId_, std::string("/robot"));
-  nodeHandle_.param("track_point_x", trackPoint_.x(), 0.0);
-  nodeHandle_.param("track_point_y", trackPoint_.y(), 0.0);
-  nodeHandle_.param("track_point_z", trackPoint_.z(), 0.0);
+  p_nodeHandle_.param("point_cloud_topic", pointCloudTopic_, std::string("/points"));
+  p_nodeHandle_.param("robot_pose_with_covariance_topic", robotPoseTopic_, std::string("/pose"));
+  p_nodeHandle_.param("track_point_frame_id", trackPointFrameId_, std::string("/robot"));
+  p_nodeHandle_.param("track_point_x", trackPoint_.x(), 0.0);
+  p_nodeHandle_.param("track_point_y", trackPoint_.y(), 0.0);
+  p_nodeHandle_.param("track_point_z", trackPoint_.z(), 0.0);
 
-  nodeHandle_.param("robot_pose_cache_size", robotPoseCacheSize_, 200);
+  p_nodeHandle_.param("robot_pose_cache_size", robotPoseCacheSize_, 200);
   ROS_ASSERT(robotPoseCacheSize_ >= 0);
 
   double minUpdateRate;
-  nodeHandle_.param("min_update_rate", minUpdateRate, 2.0);
+  p_nodeHandle_.param("min_update_rate", minUpdateRate, 2.0);
   if (minUpdateRate == 0.0) {
     maxNoUpdateDuration_.fromSec(0.0);
     ROS_WARN("Rate for publishing the map is zero.");
@@ -172,11 +173,11 @@ bool ElevationMapping::readParameters() {
   ROS_ASSERT(!maxNoUpdateDuration_.isZero());
 
   double timeTolerance;
-  nodeHandle_.param("time_tolerance", timeTolerance, 0.0);
+  p_nodeHandle_.param("time_tolerance", timeTolerance, 0.0);
   timeTolerance_.fromSec(timeTolerance);
 
   double fusedMapPublishingRate;
-  nodeHandle_.param("fused_map_publishing_rate", fusedMapPublishingRate, 1.0);
+  p_nodeHandle_.param("fused_map_publishing_rate", fusedMapPublishingRate, 1.0);
   if (fusedMapPublishingRate == 0.0) {
     fusedMapPublishTimerDuration_.fromSec(0.0);
     ROS_WARN(
@@ -190,7 +191,7 @@ bool ElevationMapping::readParameters() {
   }
 
   double visibilityCleanupRate;
-  nodeHandle_.param("visibility_cleanup_rate", visibilityCleanupRate, 1.0);
+  p_nodeHandle_.param("visibility_cleanup_rate", visibilityCleanupRate, 1.0);
   if (visibilityCleanupRate == 0.0) {
     visibilityCleanupTimerDuration_.fromSec(0.0);
     ROS_WARN("Rate for visibility cleanup is zero and therefore disabled.");
@@ -200,54 +201,54 @@ bool ElevationMapping::readParameters() {
   }
 
   // ElevationMap parameters. TODO Move this to the elevation map class.
-  nodeHandle_.param("map_frame_id", mapFrameId_, std::string("/map"));
+  p_nodeHandle_.param("map_frame_id", mapFrameId_, std::string("/map"));
   map_.setFrameId(mapFrameId_);
 
   grid_map::Length length;
   grid_map::Position position;
   double resolution;
-  nodeHandle_.param("length_in_x", length(0), 1.5);
-  nodeHandle_.param("length_in_y", length(1), 1.5);
-  nodeHandle_.param("position_x", position.x(), 0.0);
-  nodeHandle_.param("position_y", position.y(), 0.0);
-  nodeHandle_.param("resolution", resolution, 0.01);
+  p_nodeHandle_.param("length_in_x", length(0), 1.5);
+  p_nodeHandle_.param("length_in_y", length(1), 1.5);
+  p_nodeHandle_.param("position_x", position.x(), 0.0);
+  p_nodeHandle_.param("position_y", position.y(), 0.0);
+  p_nodeHandle_.param("resolution", resolution, 0.01);
   map_.setGeometry(length, resolution, position);
 
-  nodeHandle_.param("min_variance", map_.minVariance_, pow(0.003, 2));
-  nodeHandle_.param("max_variance", map_.maxVariance_, pow(0.03, 2));
-  nodeHandle_.param("mahalanobis_distance_threshold", map_.mahalanobisDistanceThreshold_, 2.5);
-  nodeHandle_.param("multi_height_noise", map_.multiHeightNoise_, pow(0.003, 2));
-  nodeHandle_.param("min_horizontal_variance", map_.minHorizontalVariance_, pow(resolution / 2.0, 2));  // two-sigma
-  nodeHandle_.param("max_horizontal_variance", map_.maxHorizontalVariance_, 0.5);
-  nodeHandle_.param("underlying_map_topic", map_.underlyingMapTopic_, std::string());
-  nodeHandle_.param("enable_visibility_cleanup", map_.enableVisibilityCleanup_, true);
-  nodeHandle_.param("enable_continuous_cleanup", map_.enableContinuousCleanup_, false);
-  nodeHandle_.param("scanning_duration", map_.scanningDuration_, 1.0);
-  nodeHandle_.param("masked_replace_service_mask_layer_name", maskedReplaceServiceMaskLayerName_, std::string("mask"));
+  p_nodeHandle_.param("min_variance", map_.minVariance_, pow(0.003, 2));
+  p_nodeHandle_.param("max_variance", map_.maxVariance_, pow(0.03, 2));
+  p_nodeHandle_.param("mahalanobis_distance_threshold", map_.mahalanobisDistanceThreshold_, 2.5);
+  p_nodeHandle_.param("multi_height_noise", map_.multiHeightNoise_, pow(0.003, 2));
+  p_nodeHandle_.param("min_horizontal_variance", map_.minHorizontalVariance_, pow(resolution / 2.0, 2));  // two-sigma
+  p_nodeHandle_.param("max_horizontal_variance", map_.maxHorizontalVariance_, 0.5);
+  p_nodeHandle_.param("underlying_map_topic", map_.underlyingMapTopic_, std::string());
+  p_nodeHandle_.param("enable_visibility_cleanup", map_.enableVisibilityCleanup_, true);
+  p_nodeHandle_.param("enable_continuous_cleanup", map_.enableContinuousCleanup_, false);
+  p_nodeHandle_.param("scanning_duration", map_.scanningDuration_, 1.0);
+  p_nodeHandle_.param("masked_replace_service_mask_layer_name", maskedReplaceServiceMaskLayerName_, std::string("mask"));
 
   // Settings for initializing elevation map
-  nodeHandle_.param("initialize_elevation_map", initializeElevationMap_, false);
-  nodeHandle_.param("initialization_method", initializationMethod_, 0);
-  nodeHandle_.param("length_in_x_init_submap", lengthInXInitSubmap_, 1.2);
-  nodeHandle_.param("length_in_y_init_submap", lengthInYInitSubmap_, 1.8);
-  nodeHandle_.param("margin_init_submap", marginInitSubmap_, 0.3);
-  nodeHandle_.param("init_submap_height_offset", initSubmapHeightOffset_, 0.0);
-  nodeHandle_.param("target_frame_init_submap", targetFrameInitSubmap_, std::string("/footprint"));
+  p_nodeHandle_.param("initialize_elevation_map", initializeElevationMap_, false);
+  p_nodeHandle_.param("initialization_method", initializationMethod_, 0);
+  p_nodeHandle_.param("length_in_x_init_submap", lengthInXInitSubmap_, 1.2);
+  p_nodeHandle_.param("length_in_y_init_submap", lengthInYInitSubmap_, 1.8);
+  p_nodeHandle_.param("margin_init_submap", marginInitSubmap_, 0.3);
+  p_nodeHandle_.param("init_submap_height_offset", initSubmapHeightOffset_, 0.0);
+  p_nodeHandle_.param("target_frame_init_submap", targetFrameInitSubmap_, std::string("/footprint"));
 
   // SensorProcessor parameters. Deprecated, use the sensorProcessor from within input sources instead!
   std::string sensorType;
-  nodeHandle_.param("sensor_processor/type", sensorType, std::string("structured_light"));
+  p_nodeHandle_.param("sensor_processor/type", sensorType, std::string("structured_light"));
 
-  SensorProcessorBase::GeneralParameters generalSensorProcessorConfig{nodeHandle_.param("robot_base_frame_id", std::string("/robot")),
+  SensorProcessorBase::GeneralParameters generalSensorProcessorConfig{p_nodeHandle_.param("robot_base_frame_id", std::string("/robot")),
                                                                       mapFrameId_};
   if (sensorType == "structured_light") {
-    sensorProcessor_.reset(new StructuredLightSensorProcessor(nodeHandle_, generalSensorProcessorConfig));
+    sensorProcessor_.reset(new StructuredLightSensorProcessor(p_nodeHandle_, generalSensorProcessorConfig));
   } else if (sensorType == "stereo") {
-    sensorProcessor_.reset(new StereoSensorProcessor(nodeHandle_, generalSensorProcessorConfig));
+    sensorProcessor_.reset(new StereoSensorProcessor(p_nodeHandle_, generalSensorProcessorConfig));
   } else if (sensorType == "laser") {
-    sensorProcessor_.reset(new LaserSensorProcessor(nodeHandle_, generalSensorProcessorConfig));
+    sensorProcessor_.reset(new LaserSensorProcessor(p_nodeHandle_, generalSensorProcessorConfig));
   } else if (sensorType == "perfect") {
-    sensorProcessor_.reset(new PerfectSensorProcessor(nodeHandle_, generalSensorProcessorConfig));
+    sensorProcessor_.reset(new PerfectSensorProcessor(p_nodeHandle_, generalSensorProcessorConfig));
   } else {
     ROS_ERROR("The sensor type %s is not available.", sensorType.c_str());
   }
